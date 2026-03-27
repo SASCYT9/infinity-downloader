@@ -1,0 +1,667 @@
+'use client';
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+
+/* ─── Platform Detection ─── */
+function detectPlatform(url) {
+  if (!url) return null;
+  const u = url.toLowerCase();
+  if (u.includes('youtube.com') || u.includes('youtu.be') || u.includes('music.youtube.com'))
+    return { id: 'youtube', name: 'YouTube', icon: '▶️' };
+  if (u.includes('tiktok.com'))
+    return { id: 'tiktok', name: 'TikTok', icon: '🎵' };
+  if (u.includes('instagram.com'))
+    return { id: 'instagram', name: 'Instagram', icon: '📸' };
+  if (u.includes('twitter.com') || u.includes('x.com'))
+    return { id: 'twitter', name: 'Twitter / X', icon: '🐦' };
+  if (u.includes('reddit.com'))
+    return { id: 'reddit', name: 'Reddit', icon: '🤖' };
+  if (u.includes('soundcloud.com'))
+    return { id: 'soundcloud', name: 'SoundCloud', icon: '🔊' };
+  if (u.includes('spotify.com'))
+    return { id: 'spotify', name: 'Spotify', icon: '🟢' };
+  if (u.includes('twitch.tv'))
+    return { id: 'twitch', name: 'Twitch', icon: '🎮' };
+  if (u.includes('facebook.com') || u.includes('fb.watch'))
+    return { id: 'generic', name: 'Facebook', icon: '📘' };
+  if (u.includes('pinterest.com'))
+    return { id: 'generic', name: 'Pinterest', icon: '📌' };
+  if (u.includes('vimeo.com'))
+    return { id: 'generic', name: 'Vimeo', icon: '🎬' };
+  if (u.startsWith('http://') || u.startsWith('https://'))
+    return { id: 'generic', name: 'Website', icon: '🌐' };
+  return null;
+}
+
+/* ─── Error messages (ukr) ─── */
+const ERROR_MESSAGES = {
+  'error.spotify.drm': 'Spotify повністю захищений DRM 🔒\nЗнайди цю ж пісню на YouTube Music — якість буде ідентична!',
+  'error.api.missing_url': 'Будь ласка, вставте посилання',
+  'error.all_instances_failed': 'Усі сервери тимчасово недоступні. Спробуйте через хвилину.',
+  'error.net.unreachable': 'Не вдалося отримати доступ до цього посилання. Перевірте URL.',
+  'error.api.content.unavailable': 'Цей контент недоступний або захищений.',
+};
+
+function getErrorText(error) {
+  if (!error) return 'Невідома помилка';
+  if (error.message) return error.message;
+  if (error.code && ERROR_MESSAGES[error.code]) return ERROR_MESSAGES[error.code];
+  if (error.code) return `Помилка: ${error.code}`;
+  return 'Щось пішло не так. Спробуйте інше посилання.';
+}
+
+/* ─── IndexedDB helpers for storing directory handle ─── */
+const DB_NAME = 'InfinityDL';
+const STORE_NAME = 'settings';
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(STORE_NAME);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveDirHandle(handle) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(handle, 'dirHandle');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function loadDirHandle() {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const req = tx.objectStore(STORE_NAME).get('dirHandle');
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function clearDirHandle() {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete('dirHandle');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {
+    // ignore
+  }
+}
+
+/* ─── Download history (localStorage) ─── */
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem('dl_history') || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(items) {
+  try {
+    localStorage.setItem('dl_history', JSON.stringify(items.slice(0, 50)));
+  } catch {
+    // quota exceeded - clear oldest
+    localStorage.setItem('dl_history', JSON.stringify(items.slice(0, 20)));
+  }
+}
+
+/* ─── Check if File System Access API is available ─── */
+function hasFSAccess() {
+  return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+}
+
+/* ─── Constants ─── */
+const VIDEO_QUALITIES = [
+  { value: 'max', label: 'MAX' },
+  { value: '2160', label: '4K' },
+  { value: '1440', label: '1440p' },
+  { value: '1080', label: '1080p' },
+  { value: '720', label: '720p' },
+  { value: '480', label: '480p' },
+  { value: '360', label: '360p' },
+];
+
+const AUDIO_FORMATS = [
+  { value: 'mp3', label: 'MP3' },
+  { value: 'ogg', label: 'OGG' },
+  { value: 'wav', label: 'WAV' },
+  { value: 'opus', label: 'OPUS' },
+  { value: 'best', label: 'Best' },
+];
+
+const AUDIO_BITRATES = [
+  { value: '320', label: '320k' },
+  { value: '256', label: '256k' },
+  { value: '128', label: '128k' },
+  { value: '96', label: '96k' },
+];
+
+const PLATFORMS = [
+  'YouTube', 'TikTok', 'Instagram', 'Twitter/X',
+  'Reddit', 'SoundCloud', 'Twitch', 'Vimeo',
+  'Pinterest', 'Facebook', 'Dailymotion', '1000+',
+];
+
+/* ═══════════════════════════════════
+   MAIN PAGE COMPONENT
+   ═══════════════════════════════════ */
+export default function Home() {
+  const [url, setUrl] = useState('');
+  const [mode, setMode] = useState('auto');
+  const [videoQuality, setVideoQuality] = useState('max');
+  const [audioFormat, setAudioFormat] = useState('mp3');
+  const [audioBitrate, setAudioBitrate] = useState('320');
+
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [picker, setPicker] = useState(null);
+  const [error, setError] = useState(null);
+  const [platform, setPlatform] = useState(null);
+
+  // Folder & history state
+  const [dirHandle, setDirHandle] = useState(null);
+  const [dirName, setDirName] = useState(null);
+  const [fsSupported, setFsSupported] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [saveProgress, setSaveProgress] = useState(null); // null | 'saving' | 'saved' | 'error'
+  const [historyCount, setHistoryCount] = useState(0);
+
+  const inputRef = useRef(null);
+
+  // Init: check FS API support, load saved dir handle & history
+  useEffect(() => {
+    setFsSupported(hasFSAccess());
+    setHistory(loadHistory());
+    setHistoryCount(loadHistory().length);
+
+    // Try restoring saved directory handle
+    (async () => {
+      const saved = await loadDirHandle();
+      if (saved) {
+        try {
+          // Verify we still have permission
+          const perm = await saved.queryPermission({ mode: 'readwrite' });
+          if (perm === 'granted') {
+            setDirHandle(saved);
+            setDirName(saved.name);
+          }
+        } catch {
+          // Permission lost — clear
+          await clearDirHandle();
+        }
+      }
+    })();
+  }, []);
+
+  // Detect platform on URL change
+  useEffect(() => {
+    setPlatform(detectPlatform(url));
+  }, [url]);
+
+  // Pick a directory
+  const pickFolder = useCallback(async () => {
+    try {
+      const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      setDirHandle(handle);
+      setDirName(handle.name);
+      await saveDirHandle(handle);
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error('Folder pick failed:', err);
+      }
+    }
+  }, []);
+
+  // Remove saved folder
+  const removeFolder = useCallback(async () => {
+    setDirHandle(null);
+    setDirName(null);
+    await clearDirHandle();
+  }, []);
+
+  // Save file directly to chosen folder via File System Access API
+  async function saveToFolder(downloadUrl, filename) {
+    if (!dirHandle) return false;
+
+    try {
+      // Re-request permission if needed
+      const perm = await dirHandle.requestPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') {
+        setDirHandle(null);
+        setDirName(null);
+        await clearDirHandle();
+        return false;
+      }
+
+      setSaveProgress('saving');
+
+      // Fetch the file as a stream
+      const response = await fetch(downloadUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      // Sanitize filename
+      const safeName = filename.replace(/[<>:"/\\|?*]/g, '_').trim() || 'download';
+
+      // Create/overwrite file in the directory
+      const fileHandle = await dirHandle.getFileHandle(safeName, { create: true });
+      const writable = await fileHandle.createWritable();
+
+      // Pipe the response body to disk
+      if (response.body) {
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writable.write(value);
+        }
+      } else {
+        // Fallback: read as blob
+        const blob = await response.blob();
+        await writable.write(blob);
+      }
+
+      await writable.close();
+      setSaveProgress('saved');
+      return true;
+    } catch (err) {
+      console.error('Save to folder failed:', err);
+      setSaveProgress('error');
+      return false;
+    }
+  }
+
+  // Add to download history
+  function addToHistory(entry) {
+    const updated = [
+      { ...entry, timestamp: Date.now() },
+      ...history.filter((h) => h.url !== entry.url),
+    ].slice(0, 50);
+    setHistory(updated);
+    setHistoryCount(updated.length);
+    saveHistory(updated);
+  }
+
+  // Clear history
+  function clearHistory() {
+    setHistory([]);
+    setHistoryCount(0);
+    localStorage.removeItem('dl_history');
+  }
+
+  // Handle download
+  const handleSubmit = useCallback(async (e) => {
+    e.preventDefault();
+    if (!url.trim() || loading) return;
+
+    setLoading(true);
+    setResult(null);
+    setPicker(null);
+    setError(null);
+    setSaveProgress(null);
+
+    try {
+      const res = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: url.trim(),
+          mode,
+          videoQuality,
+          audioFormat,
+          audioBitrate,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.status === 'error') {
+        setError(data.error);
+      } else if (data.status === 'redirect' || data.status === 'tunnel') {
+        setResult(data);
+
+        // Add to history
+        addToHistory({
+          url: url.trim(),
+          filename: data.filename,
+          platform: platform?.name || 'Unknown',
+          mode,
+        });
+
+        // If we have a folder selected, auto-save there
+        if (dirHandle && data.url && data.filename) {
+          const saved = await saveToFolder(data.url, data.filename);
+          if (!saved) {
+            // Fallback to browser download
+            triggerDownload(data.url, data.filename);
+          }
+        } else {
+          // No folder — trigger standard browser download
+          triggerDownload(data.url, data.filename);
+        }
+      } else if (data.status === 'picker') {
+        setPicker(data);
+        addToHistory({
+          url: url.trim(),
+          filename: `Picker (${data.picker?.length || 0} items)`,
+          platform: platform?.name || 'Unknown',
+          mode,
+        });
+      } else {
+        setError({ message: 'Нерозпізнана відповідь від сервера' });
+      }
+    } catch (err) {
+      setError({ message: 'Помилка мережі. Перевірте інтернет-з\'єднання.' });
+    } finally {
+      setLoading(false);
+    }
+  }, [url, mode, videoQuality, audioFormat, audioBitrate, loading, dirHandle, platform, history]);
+
+  // Trigger browser download (fallback)
+  function triggerDownload(downloadUrl, filename) {
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename || '';
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  // Handle picker item
+  async function handlePickerItem(item) {
+    if (dirHandle) {
+      const saved = await saveToFolder(item.url, item.url.split('/').pop() || 'media');
+      if (!saved) triggerDownload(item.url, '');
+    } else {
+      triggerDownload(item.url, '');
+    }
+  }
+
+  // Quick re-download from history
+  function handleHistoryRedownload(entry) {
+    setUrl(entry.url);
+    setShowHistory(false);
+    // Auto-focus input
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }
+
+  return (
+    <main className="page-wrapper">
+      {/* Header */}
+      <header className="header">
+        <h1 className="header__title">
+          <span className="header__title--white">Infinity </span>
+          <span className="header__title--gradient">Downloader</span>
+        </h1>
+        <p className="header__subtitle">
+          Завантажуй відео та музику в максимальній якості з YouTube, TikTok та 1000+ сайтів
+        </p>
+      </header>
+
+      {/* Folder Selector Bar */}
+      {fsSupported && (
+        <div className="folder-bar glass" id="folder-bar">
+          <div className="folder-bar__icon">📂</div>
+          {dirName ? (
+            <div className="folder-bar__content">
+              <div className="folder-bar__status">
+                <span className="folder-bar__dot folder-bar__dot--active" />
+                <span className="folder-bar__path">Завантажується в: <strong>{dirName}</strong></span>
+              </div>
+              <div className="folder-bar__actions">
+                <button className="folder-bar__btn" onClick={pickFolder}>Змінити</button>
+                <button className="folder-bar__btn folder-bar__btn--danger" onClick={removeFolder}>✕</button>
+              </div>
+            </div>
+          ) : (
+            <div className="folder-bar__content">
+              <span className="folder-bar__hint">Обери папку для автоматичного збереження</span>
+              <button className="folder-bar__btn folder-bar__btn--primary" onClick={pickFolder}>
+                Обрати папку
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Main Downloader Card */}
+      <section className="downloader glass" id="downloader-card">
+        {/* Platform Badge */}
+        <div style={{ textAlign: 'center' }}>
+          <span className={`platform-badge platform-badge--${platform?.id || 'generic'} ${platform ? 'platform-badge--visible' : ''}`}>
+            {platform?.icon} {platform?.name}
+          </span>
+        </div>
+
+        {/* Format Selector */}
+        <div className="format-selector" role="radiogroup" aria-label="Download mode">
+          <label className="format-option">
+            <input type="radio" name="mode" value="auto" checked={mode === 'auto'} onChange={() => setMode('auto')} />
+            <span className="format-option__label">🎬 Відео (Max)</span>
+          </label>
+          <label className="format-option">
+            <input type="radio" name="mode" value="audio" checked={mode === 'audio'} onChange={() => setMode('audio')} />
+            <span className="format-option__label">🎵 Тільки аудіо</span>
+          </label>
+        </div>
+
+        {/* Video Quality Picker */}
+        <div className={`quality-section ${mode === 'auto' ? 'quality-section--visible' : ''}`}>
+          <span className="quality-label">Якість відео</span>
+          <div className="quality-chips" role="radiogroup" aria-label="Video quality">
+            {VIDEO_QUALITIES.map((q) => (
+              <label className="quality-chip" key={q.value}>
+                <input type="radio" name="quality" value={q.value} checked={videoQuality === q.value} onChange={() => setVideoQuality(q.value)} />
+                <span className="quality-chip__label">{q.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Audio Format & Bitrate */}
+        <div className={`audio-format-section ${mode === 'audio' ? 'audio-format-section--visible' : ''}`}>
+          <span className="quality-label">Формат аудіо</span>
+          <div className="quality-chips" role="radiogroup" aria-label="Audio format" style={{ marginBottom: '0.75rem' }}>
+            {AUDIO_FORMATS.map((f) => (
+              <label className="quality-chip" key={f.value}>
+                <input type="radio" name="audioFormat" value={f.value} checked={audioFormat === f.value} onChange={() => setAudioFormat(f.value)} />
+                <span className="quality-chip__label">{f.label}</span>
+              </label>
+            ))}
+          </div>
+          <span className="quality-label">Бітрейт</span>
+          <div className="quality-chips" role="radiogroup" aria-label="Audio bitrate">
+            {AUDIO_BITRATES.map((b) => (
+              <label className="quality-chip" key={b.value}>
+                <input type="radio" name="audioBitrate" value={b.value} checked={audioBitrate === b.value} onChange={() => setAudioBitrate(b.value)} />
+                <span className="quality-chip__label">{b.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* URL Input */}
+        <form onSubmit={handleSubmit} id="download-form">
+          <div className="input-group">
+            <svg className="input-group__icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+            <input
+              ref={inputRef}
+              type="url"
+              className="input-group__field"
+              id="url-input"
+              placeholder="Встав посилання на відео чи пісню..."
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+              autoComplete="off"
+            />
+            <button type="submit" className="btn-download" id="download-btn" disabled={loading || !url.trim()}>
+              <span className="btn-download__text">
+                {loading ? (
+                  <><span className="spinner" /> Обробка...</>
+                ) : (
+                  <>⚡ Завантажити</>
+                )}
+              </span>
+              <div className="btn-download__shimmer" />
+            </button>
+          </div>
+        </form>
+
+        {/* Error */}
+        {error && (
+          <div className="message message--error" id="error-message">
+            {getErrorText(error)}
+          </div>
+        )}
+
+        {/* Save Progress Indicator */}
+        {saveProgress === 'saving' && (
+          <div className="message message--info">
+            <span className="spinner" style={{ marginRight: '0.5rem' }} />
+            Зберігаю в папку <strong>{dirName}</strong>...
+          </div>
+        )}
+
+        {/* Success Result */}
+        {result && (
+          <div className="result" id="result-card">
+            <div className="result__title">
+              {saveProgress === 'saved' ? '✅ Збережено в папку!' : '✅ Готово!'}
+            </div>
+            {result.filename && (
+              <div className="result__filename">{result.filename}</div>
+            )}
+            {saveProgress === 'saved' && dirName && (
+              <div className="result__folder-info">
+                📂 Збережено в: <strong>{dirName}</strong>
+              </div>
+            )}
+            {saveProgress !== 'saved' && (
+              <a href={result.url} className="btn-save" target="_blank" rel="noopener noreferrer" download={result.filename || ''}>
+                💾 Зберегти файл
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Picker — Multiple items */}
+        {picker && (
+          <div className="picker" id="picker-section">
+            <div className="picker__title">
+              📎 Обери що завантажити ({picker.picker?.length || 0} елементів)
+              {dirName && <span className="picker__folder-hint"> → зберігається в {dirName}</span>}
+            </div>
+            {picker.audio && (
+              <div style={{ marginBottom: '0.75rem' }}>
+                <button className="btn-save" onClick={() => handlePickerItem({ url: picker.audio })} style={{ fontSize: '0.85rem', padding: '0.5rem 1rem' }}>
+                  🎵 Завантажити аудіо-трек
+                </button>
+              </div>
+            )}
+            <div className="picker__grid">
+              {picker.picker?.map((item, i) => (
+                <div key={i} className="picker__item" onClick={() => handlePickerItem(item)} title={`Завантажити ${item.type} #${i + 1}`}>
+                  {item.thumb ? (
+                    <img src={item.thumb} alt={`Item ${i + 1}`} loading="lazy" />
+                  ) : (
+                    <span style={{ fontSize: '2rem' }}>
+                      {item.type === 'photo' ? '🖼️' : item.type === 'video' ? '🎬' : '📄'}
+                    </span>
+                  )}
+                  <div className="picker__item-overlay">
+                    <span className="picker__item-label">
+                      {item.type === 'photo' ? '📥 Фото' : item.type === 'video' ? '📥 Відео' : '📥 GIF'} #{i + 1}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Download History */}
+      <section className="history-section glass" id="history-section">
+        <button className="history-toggle" onClick={() => setShowHistory(!showHistory)} id="history-toggle">
+          <span className="history-toggle__icon">📋</span>
+          <span>Історія завантажень</span>
+          {historyCount > 0 && <span className="history-toggle__badge">{historyCount}</span>}
+          <span className={`history-toggle__chevron ${showHistory ? 'history-toggle__chevron--open' : ''}`}>▾</span>
+        </button>
+
+        {showHistory && (
+          <div className="history-list" id="history-list">
+            {history.length === 0 ? (
+              <div className="history-empty">Поки що нічого не завантажували</div>
+            ) : (
+              <>
+                <div className="history-actions">
+                  <button className="history-clear" onClick={clearHistory}>🗑️ Очистити</button>
+                </div>
+                {history.map((item, i) => (
+                  <div key={i} className="history-item" onClick={() => handleHistoryRedownload(item)}>
+                    <div className="history-item__icon">
+                      {item.mode === 'audio' ? '🎵' : '🎬'}
+                    </div>
+                    <div className="history-item__info">
+                      <div className="history-item__name">{item.filename || item.url}</div>
+                      <div className="history-item__meta">
+                        {item.platform} · {new Date(item.timestamp).toLocaleDateString('uk-UA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                    <div className="history-item__action">↻</div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Features */}
+      <section className="features glass">
+        <h3 className="features__title">Можливості</h3>
+        <ul className="features__grid">
+          <li className="features__item"><span className="features__icon">✨</span> Максимальна якість (до 8K)</li>
+          <li className="features__item"><span className="features__icon">⚡</span> Миттєве завантаження</li>
+          <li className="features__item"><span className="features__icon">🎵</span> MP3 320kbps аудіо</li>
+          <li className="features__item"><span className="features__icon">📱</span> Працює з мобільного</li>
+          <li className="features__item"><span className="features__icon">🛡️</span> Без реклами та трекерів</li>
+          <li className="features__item"><span className="features__icon">📂</span> Зберігай в одну папку</li>
+        </ul>
+        <div className="platforms-strip">
+          {PLATFORMS.map((p) => (
+            <span className="platforms-strip__badge" key={p}>{p}</span>
+          ))}
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="footer">
+        Infinity Downloader · Powered by{' '}
+        <a href="https://github.com/imputnet/cobalt" target="_blank" rel="noopener noreferrer">Cobalt</a>
+      </footer>
+    </main>
+  );
+}
