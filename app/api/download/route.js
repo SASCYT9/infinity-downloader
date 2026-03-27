@@ -29,19 +29,19 @@ const OFFICIAL_INSTANCES = [
 
 // Errors that mean "this instance can't serve us, try next"
 const INSTANCE_LEVEL_ERRORS = [
-  'error.api.auth',        // JWT/auth required
-  'error.api.rate_limit',  // rate limited
-  'error.api.capacity',    // server overloaded
-  'error.api.generic',     // generic server error
+  'error.api.auth',          // JWT/auth required
+  'error.api.rate_limit',    // rate limited
+  'error.api.capacity',      // server overloaded
+  'error.api.generic',       // generic server error
+  'error.api.youtube.login', // needs cookies (some instances have them)
+  'error.api.youtube.age',   // age restricted (some instances bypass)
+  'error.api.youtube.decipher', // decipher error (instance-specific)
 ];
 
 // Errors that mean "the URL/content is the problem, don't retry"
 const CONTENT_LEVEL_ERRORS = [
   'error.api.link',          // bad/unsupported link
-  'error.api.fetch',         // can't fetch the content
-  'error.api.content',       // content unavailable  
-  'error.api.youtube.age',   // age restricted
-  'error.api.youtube.login', // login required
+  'error.api.content',       // content unavailable
 ];
 
 function isInstanceError(code) {
@@ -135,7 +135,6 @@ export async function POST(request) {
       filenameStyle: 'pretty',
       downloadMode: mode || 'auto',
       youtubeVideoCodec: 'h264',
-      alwaysProxy: true,
     };
 
     if (mode === 'audio') {
@@ -146,8 +145,8 @@ export async function POST(request) {
     const instances = await getInstances();
     let lastError = null;
 
-    // Try up to 8 instances (increased from 5)
-    const maxTries = Math.min(instances.length, 8);
+    // Try up to 10 instances for maximum reliability
+    const maxTries = Math.min(instances.length, 10);
     for (let i = 0; i < maxTries; i++) {
       const instance = instances[i];
       try {

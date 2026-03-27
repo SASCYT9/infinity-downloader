@@ -37,9 +37,14 @@ function detectPlatform(url) {
 const ERROR_MESSAGES = {
   'error.spotify.drm': 'Spotify повністю захищений DRM 🔒\nЗнайди цю ж пісню на YouTube Music — якість буде ідентична!',
   'error.api.missing_url': 'Будь ласка, вставте посилання',
-  'error.all_instances_failed': 'Усі сервери тимчасово недоступні. Спробуйте через хвилину.',
+  'error.all_instances_failed': 'Усі сервери тимчасово недоступні 😔\nСпробуйте через хвилину або інше посилання.',
   'error.net.unreachable': 'Не вдалося отримати доступ до цього посилання. Перевірте URL.',
   'error.api.content.unavailable': 'Цей контент недоступний або захищений.',
+  'error.api.youtube.login': 'YouTube Music вимагає авторизацію для цього треку 🔒\nСпробуйте знайти цей трек через звичайний YouTube.',
+  'error.api.youtube.age': 'Це відео має вікові обмеження. Спробуйте інший інстанс.',
+  'error.api.youtube.decipher': 'Не вдалося розшифрувати відео. Спробуйте через хвилину.',
+  'error.api.link.unsupported': 'Цей сайт або формат посилання не підтримується.',
+  'error.api.fetch.empty': 'Не вдалося знайти контент за цим посиланням.',
 };
 
 function getErrorText(error) {
