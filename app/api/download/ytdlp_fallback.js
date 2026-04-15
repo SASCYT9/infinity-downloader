@@ -74,6 +74,7 @@ export async function fetchDirectYoutubeUrl(url, mode) {
 
   } catch (error) {
     console.error('yt-dlp fallback failed:', error.message);
-    return null;
+    if (error.stderr) console.error('stderr:', error.stderr.toString());
+    return { status: 'error', error: { code: 'error.fallback', message: `Fallback error: ${error.message}` } };
   }
 }
