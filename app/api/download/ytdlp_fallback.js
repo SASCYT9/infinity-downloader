@@ -3,13 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 
-const YTDLP_LINUX_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
+const YTDLP_LINUX_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux';
 const YTDLP_WIN_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
 
 export async function fetchDirectYoutubeUrl(url, mode) {
   try {
     const isWin = os.platform() === 'win32';
-    const binName = isWin ? 'yt-dlp.exe' : 'yt-dlp';
+    const binName = isWin ? 'yt-dlp-standalone.exe' : 'yt-dlp-linux-standalone';
     
     // Use /tmp for serverless environments (Vercel allows writable /tmp up to 500MB)
     const tmpDir = os.tmpdir();
