@@ -3,20 +3,22 @@
 
 // Hardcoded fallback instances (sorted by reliability, NO AUTH required)
 const FALLBACK_INSTANCES = [
+  'https://lime.clxxped.lol',
   'https://cobaltapi.squair.xyz',
-  'https://cobalt-api.meowing.de',
   'https://nuko-c.meowing.de',
   'https://api.cobalt.liubquanti.click',
   'https://cobaltapi.kittycat.boo',
   'https://fox.kittycat.boo',
   'https://dog.kittycat.boo',
   'https://melon.clxxped.lol',
-  'https://lime.clxxped.lol',
   'https://grapefruit.clxxped.lol',
   'https://api.dl.woof.monster',
   'https://api.qwkuns.me',
   'https://cobaltapi.cjs.nz',
   'https://subito-c.meowing.de',
+  'https://cobalt.alpha.wolfy.love',
+  'https://api.cobalt.blackcat.sweeux.org',
+  'https://cobalt.omega.wolfy.love',
 ];
 
 // Official instances (require JWT — used only as last resort)
@@ -59,20 +61,31 @@ async function getInstances() {
       signal: AbortSignal.timeout(4000),
     });
     const json = await res.json();
-    const ytInstances = json?.data?.youtube || [];
-    if (ytInstances.length > 0) {
-      // Filter out official instances that require JWT
-      const community = ytInstances.filter(
-        url => !OFFICIAL_INSTANCES.some(off => url.startsWith(off.replace(/\/$/, '')))
-      );
-      if (community.length > 0) return community;
-      return ytInstances;
+    const platformData = json?.data || {};
+
+    // Collect unique instances from ALL platform categories
+    const allInstances = new Set();
+    for (const urls of Object.values(platformData)) {
+      if (Array.isArray(urls)) {
+        for (const url of urls) {
+          allInstances.add(url.replace(/\/$/, ''));
+        }
+      }
     }
+
+    // Filter out official instances that require JWT
+    const community = [...allInstances].filter(
+      url => !OFFICIAL_INSTANCES.some(off => url.startsWith(off.replace(/\/$/, '')))
+    );
+
+    if (community.length > 0) return community;
+    if (allInstances.size > 0) return [...allInstances];
   } catch {
     // Fall through to hardcoded list
   }
   return FALLBACK_INSTANCES;
 }
+
 
 async function tryInstance(instanceUrl, body) {
   const controller = new AbortController();
