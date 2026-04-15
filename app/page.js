@@ -143,11 +143,11 @@ const VIDEO_QUALITIES = [
 ];
 
 const AUDIO_FORMATS = [
+  { value: 'best', label: 'Найкращий (Оригінал)' },
   { value: 'mp3', label: 'MP3' },
   { value: 'ogg', label: 'OGG' },
   { value: 'wav', label: 'WAV' },
   { value: 'opus', label: 'OPUS' },
-  { value: 'best', label: 'Best' },
 ];
 
 const AUDIO_BITRATES = [
@@ -176,8 +176,8 @@ export default function Home() {
   const [url, setUrl] = useState('');
   const [mode, setMode] = useState('auto');
   const [videoQuality, setVideoQuality] = useState('max');
-  const [audioFormat, setAudioFormat] = useState('mp3');
-  const [audioBitrate, setAudioBitrate] = useState('320');
+  const [audioFormat, setAudioFormat] = useState('best');
+  const [audioBitrate, setAudioBitrate] = useState('128');
   const [youtubeVideoCodec, setYoutubeVideoCodec] = useState('h264');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
