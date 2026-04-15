@@ -195,6 +195,7 @@ export default function Home() {
   const [showHistory, setShowHistory] = useState(false);
   const [saveProgress, setSaveProgress] = useState(null); // null | 'saving' | 'saved' | 'error'
   const [historyCount, setHistoryCount] = useState(0);
+  const [localEngineActive, setLocalEngineActive] = useState(false);
 
   const inputRef = useRef(null);
 
@@ -227,6 +228,13 @@ export default function Home() {
   useEffect(() => {
     setPlatform(detectPlatform(url));
   }, [url]);
+
+  // Detect strictly local python engine
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/ping')
+      .then(res => setLocalEngineActive(res.ok))
+      .catch(() => setLocalEngineActive(false));
+  }, []);
 
   // Pick a directory
   const pickFolder = useCallback(async () => {
@@ -330,7 +338,8 @@ export default function Home() {
     setSaveProgress(null);
 
     try {
-      const res = await fetch('/api/download', {
+      const apiUrl = localEngineActive ? 'http://127.0.0.1:8000/api/download' : '/api/download';
+      const res = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -458,10 +467,13 @@ export default function Home() {
 
       {/* Main Downloader Card */}
       <section className="downloader glass" id="downloader-card">
-        {/* Platform Badge */}
+        {/* Platform & Engine Badges */}
         <div style={{ textAlign: 'center' }}>
-          <span className={`platform-badge platform-badge--${platform?.id || 'generic'} ${platform ? 'platform-badge--visible' : ''}`}>
+          <span className={`platform-badge platform-badge--${platform?.id || 'generic'} ${platform ? 'platform-badge--visible' : ''}`} style={{ marginRight: '8px' }}>
             {platform?.icon} {platform?.name}
+          </span>
+          <span className="platform-badge platform-badge--visible" style={{ background: localEngineActive ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.1)', color: localEngineActive ? '#10b981' : '#9ca3af' }}>
+            {localEngineActive ? '⚡ Local Engine ACTIVE' : '☁️ Cloud API ACTIVE'}
           </span>
         </div>
 
