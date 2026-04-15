@@ -116,6 +116,30 @@ async function tryInstance(instanceUrl, body) {
   }
 }
 
+// Helper to ensure the tunnel URL actually provides data and isn't a corrupted 0-byte stream
+async function verifyTunnel(tunnelUrl) {
+  try {
+    const res = await fetch(tunnelUrl, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return false;
+    
+    const contentLength = res.headers.get('content-length');
+    if (contentLength === '0') return false;
+
+    if (res.body) {
+      const reader = res.body.getReader();
+      const { value, done } = await reader.read();
+      await reader.cancel(); // Free connection immediately
+      
+      if (done && (!value || value.length === 0)) {
+        return false; // Yielded 0 bytes
+      }
+    }
+    return true; // Valid stream!
+  } catch (e) {
+    return false; // Timeout or network error
+  }
+}
+
 export async function POST(request) {
   try {
     const data = await request.json();
@@ -182,6 +206,14 @@ export async function POST(request) {
           // Unknown error → save and continue
           lastError = result;
           continue;
+        } else if (result.status === 'tunnel') {
+          // Tunnel validation: ensure the url actually streams data
+          const isValid = await verifyTunnel(result.url);
+          if (!isValid) {
+            console.warn(`Instance ${instance} returned a corrupted 0-byte tunnel. Skipping.`);
+            lastError = { status: 'error', error: { code: 'error.api.corrupted_stream', message: 'Instance produced an empty 0-byte file.' } };
+            continue; // Skip to next instance
+          }
         }
 
         // Success — return the result
