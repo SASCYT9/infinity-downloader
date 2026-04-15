@@ -1,5 +1,6 @@
 // Cobalt API proxy — runs as a Vercel serverless function
 // Forwards download requests to working Cobalt instances with auto-fallback
+import { fetchDirectYoutubeUrl } from './ytdlp_fallback';
 
 // Hardcoded fallback instances (sorted by reliability, NO AUTH required)
 const FALLBACK_INSTANCES = [
@@ -229,8 +230,19 @@ export async function POST(request) {
     }
 
     // All instances failed
+    console.log('All Cobalt instances failed. Attempting yt-dlp fallback...');
+    
+    // Check if it's YouTube, since our fallback currently focuses on YouTube Music and Video
+    if (url.includes('youtube.com') || url.includes('youtu.be')) {
+      const fallbackResult = await fetchDirectYoutubeUrl(url, mode);
+      if (fallbackResult) {
+        console.log('yt-dlp fallback succeeded!');
+        return Response.json(fallbackResult);
+      }
+    }
+
     return Response.json(
-      { status: 'error', error: { code: 'error.all_instances_failed', message: 'Усі сервери тимчасово недоступні. Спробуйте через хвилину.' } },
+      { status: 'error', error: { code: 'error.all_instances_failed', message: 'Усі сервери тимчасово недоступні (включаючи резервний). Спробуйте через хвилину.' } },
       { status: 502 }
     );
 
