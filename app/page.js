@@ -157,6 +157,12 @@ const AUDIO_BITRATES = [
   { value: '96', label: '96k' },
 ];
 
+const VIDEO_CODECS = [
+  { value: 'h264', label: 'H.264 (CapCut)' },
+  { value: 'av1', label: 'AV1' },
+  { value: 'vp9', label: 'VP9' },
+];
+
 const PLATFORMS = [
   'YouTube', 'TikTok', 'Instagram', 'Twitter/X',
   'Reddit', 'SoundCloud', 'Twitch', 'Vimeo',
@@ -172,6 +178,8 @@ export default function Home() {
   const [videoQuality, setVideoQuality] = useState('max');
   const [audioFormat, setAudioFormat] = useState('mp3');
   const [audioBitrate, setAudioBitrate] = useState('320');
+  const [youtubeVideoCodec, setYoutubeVideoCodec] = useState('h264');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -331,6 +339,7 @@ export default function Home() {
           videoQuality,
           audioFormat,
           audioBitrate,
+          youtubeVideoCodec,
         }),
       });
 
@@ -468,14 +477,32 @@ export default function Home() {
           </label>
         </div>
 
-        {/* Video Quality Picker */}
-        <div className={`quality-section ${mode === 'auto' ? 'quality-section--visible' : ''}`}>
+        {/* Advanced Options Toggle */}
+        <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+          <button type="button" className="history-toggle" onClick={() => setShowAdvanced(!showAdvanced)} style={{ display: 'inline-flex', padding: '0.5rem 1rem', background: 'rgba(255,255,255,0.05)' }}>
+            <span>⚙️ Налаштування якості</span>
+            <span className={`history-toggle__chevron ${showAdvanced ? 'history-toggle__chevron--open' : ''}`}>▾</span>
+          </button>
+        </div>
+
+        <div style={{ display: showAdvanced ? 'block' : 'none' }}>
+          {/* Video Quality Picker */}
+          <div className={`quality-section ${mode === 'auto' ? 'quality-section--visible' : ''}`}>
           <span className="quality-label">Якість відео</span>
           <div className="quality-chips" role="radiogroup" aria-label="Video quality">
             {VIDEO_QUALITIES.map((q) => (
               <label className="quality-chip" key={q.value}>
                 <input type="radio" name="quality" value={q.value} checked={videoQuality === q.value} onChange={() => setVideoQuality(q.value)} />
                 <span className="quality-chip__label">{q.label}</span>
+              </label>
+            ))}
+          </div>
+          <span className="quality-label" style={{ marginTop: '0.75rem' }}>Кодек відео (H.264 найкраще для CapCut)</span>
+          <div className="quality-chips" role="radiogroup" aria-label="Video codec">
+            {VIDEO_CODECS.map((c) => (
+              <label className="quality-chip" key={c.value}>
+                <input type="radio" name="codec" value={c.value} checked={youtubeVideoCodec === c.value} onChange={() => setYoutubeVideoCodec(c.value)} />
+                <span className="quality-chip__label">{c.label}</span>
               </label>
             ))}
           </div>
@@ -501,6 +528,7 @@ export default function Home() {
               </label>
             ))}
           </div>
+        </div>
         </div>
 
         {/* URL Input */}

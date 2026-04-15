@@ -119,7 +119,7 @@ async function tryInstance(instanceUrl, body) {
 export async function POST(request) {
   try {
     const data = await request.json();
-    const { url, mode, videoQuality, audioFormat, audioBitrate } = data;
+    const { url, mode, videoQuality, audioFormat, audioBitrate, youtubeVideoCodec } = data;
 
     if (!url || typeof url !== 'string') {
       return Response.json(
@@ -147,7 +147,7 @@ export async function POST(request) {
       audioBitrate: audioBitrate || '320',
       filenameStyle: 'pretty',
       downloadMode: mode || 'auto',
-      youtubeVideoCodec: 'h264',
+      youtubeVideoCodec: youtubeVideoCodec || 'h264',
     };
 
     if (mode === 'audio') {
