@@ -264,7 +264,7 @@ export default function Home() {
 
   // Detect local engine
   useEffect(() => {
-    fetch(`${LOCAL_API}/ping`)
+    fetch(`${LOCAL_API}/ping`, { headers: { 'Bypass-Tunnel-Reminder': 'true' } })
       .then(res => setLocalEngineActive(res.ok))
       .catch(() => setLocalEngineActive(false));
   }, []);
@@ -283,7 +283,7 @@ export default function Home() {
       try {
         const res = await fetch(`${LOCAL_API}/api/preview`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Bypass-Tunnel-Reminder': 'true' },
           body: JSON.stringify({ url: url.trim() }),
         });
         const data = await res.json();
@@ -389,7 +389,7 @@ export default function Home() {
     
     pollIntervalRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`${LOCAL_API}/api/download/progress/${jobId}`);
+        const res = await fetch(`${LOCAL_API}/api/download/progress/${jobId}`, { headers: { 'Bypass-Tunnel-Reminder': 'true' } });
         const data = await res.json();
         setDownloadProgress(data);
 
@@ -453,7 +453,7 @@ export default function Home() {
         // ── Local Engine: async download with progress polling ──
         const res = await fetch(`${LOCAL_API}/api/download`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Bypass-Tunnel-Reminder': 'true' },
           body: JSON.stringify({
             url: url.trim(),
             mode,
@@ -586,7 +586,7 @@ export default function Home() {
       try {
         const res = await fetch(`${LOCAL_API}/api/download`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Bypass-Tunnel-Reminder': 'true' },
           body: JSON.stringify({
             url: item.url,
             mode: item.mode,
@@ -599,7 +599,7 @@ export default function Home() {
           // Wait for this download to complete
           await new Promise((resolve) => {
             const interval = setInterval(async () => {
-              const progRes = await fetch(`${LOCAL_API}/api/download/progress/${data.job_id}`);
+              const progRes = await fetch(`${LOCAL_API}/api/download/progress/${data.job_id}`, { headers: { 'Bypass-Tunnel-Reminder': 'true' } });
               const progData = await progRes.json();
 
               if (progData.status === 'completed') {
