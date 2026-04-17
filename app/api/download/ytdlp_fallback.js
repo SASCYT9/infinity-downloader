@@ -9,7 +9,7 @@ const YTDLP_WIN_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download
 export async function fetchDirectYoutubeUrl(url, mode) {
   try {
     const isWin = os.platform() === 'win32';
-    const binName = isWin ? 'yt-dlp-standalone.exe' : 'yt-dlp-linux-standalone';
+    const binName = isWin ? 'yt-dlp-standalone-v3.exe' : 'yt-dlp-linux-standalone-v3';
     
     // Use /tmp for serverless environments (Vercel allows writable /tmp up to 500MB)
     const tmpDir = os.tmpdir();
@@ -46,7 +46,8 @@ export async function fetchDirectYoutubeUrl(url, mode) {
     const outputBuffer = execFileSync(binPath, [
       '-j', 
       '--no-warnings',
-      '--extractor-args', 'youtube:player_client=ios',
+      '--rm-cache-dir',
+      '--extractor-args', 'youtube:player_client=tv,mweb,ios',
       '-f', format, 
       url
     ], { 
