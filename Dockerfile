@@ -12,6 +12,10 @@ RUN npm install
 # Copy the rest of the application
 COPY . .
 
+# Pass build args to Next.js build
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 # Build the Next.js application
 RUN npm run build
 
