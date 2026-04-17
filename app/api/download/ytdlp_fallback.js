@@ -46,7 +46,7 @@ export async function fetchDirectYoutubeUrl(url, mode) {
     const outputBuffer = execFileSync(binPath, [
       '-j', 
       '--no-warnings',
-      '--extractor-args', 'youtube:player_client=tv_embedded',
+      '--extractor-args', 'youtube:player_client=ios',
       '-f', format, 
       url
     ], { 

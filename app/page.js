@@ -187,7 +187,7 @@ const PLATFORMS = [
   'Pinterest', 'Facebook', 'Dailymotion', '1000+',
 ];
 
-const LOCAL_API = 'http://127.0.0.1:8000';
+const LOCAL_API = process.env.NEXT_PUBLIC_API_URL || 'https://clever-eels-trade.loca.lt';
 
 /* ═══════════════════════════════════
    MAIN PAGE COMPONENT
