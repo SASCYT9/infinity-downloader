@@ -352,9 +352,8 @@ export async function POST(request) {
       downloadMode: mode,
     };
 
-    if (youtubeVideoCodec !== 'auto') {
-      cobaltBody.youtubeVideoCodec = youtubeVideoCodec;
-    }
+    // Keep H.264 as explicit opt-in. For default/auto mode prefer VP9 to unlock 4K webm when available.
+    cobaltBody.youtubeVideoCodec = youtubeVideoCodec === 'auto' ? 'vp9' : youtubeVideoCodec;
 
     if (mode === 'audio') {
       cobaltBody.downloadMode = 'audio';

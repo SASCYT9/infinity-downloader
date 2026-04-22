@@ -236,7 +236,7 @@ async function fetchViaServerlessYtdlp(url, mode, options = {}) {
             '-j',
             '--no-warnings',
             '--rm-cache-dir',
-            '--extractor-args', 'youtube:player_client=android',
+            '--extractor-args', 'youtube:player_client=web,ios',
             '-f', format,
             url,
           ],
