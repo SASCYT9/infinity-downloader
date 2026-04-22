@@ -33,6 +33,10 @@ function detectPlatform(url) {
   return null;
 }
 
+function isTruthyFlag(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
 /* ─── Error messages (ukr) ─── */
 const ERROR_MESSAGES = {
   'error.spotify.drm': 'Spotify повністю захищений DRM 🔒\nЗнайди цю ж пісню на YouTube Music — якість буде ідентична!',
@@ -187,7 +191,8 @@ const PLATFORMS = [
   'Pinterest', 'Facebook', 'Dailymotion', '1000+',
 ];
 
-const LOCAL_API = process.env.NEXT_PUBLIC_API_URL || 'https://clever-eels-trade.loca.lt';
+const LOCAL_API = process.env.NEXT_PUBLIC_API_URL || 'https://infinity-dl.loca.lt';
+const FORCE_LOCAL_ENGINE = isTruthyFlag(process.env.NEXT_PUBLIC_USE_LOCAL_ENGINE);
 
 /* ═══════════════════════════════════
    MAIN PAGE COMPONENT
@@ -225,7 +230,7 @@ export default function Home() {
   const [showHistory, setShowHistory] = useState(false);
   const [saveProgress, setSaveProgress] = useState(null);
   const [historyCount, setHistoryCount] = useState(0);
-  const [localEngineActive, setLocalEngineActive] = useState(false);
+  const [localEngineActive, setLocalEngineActive] = useState(FORCE_LOCAL_ENGINE);
 
   // Queue
   const [queue, setQueue] = useState([]);
@@ -264,6 +269,11 @@ export default function Home() {
 
   // Detect local engine
   useEffect(() => {
+    if (!FORCE_LOCAL_ENGINE) {
+      setLocalEngineActive(false);
+      return;
+    }
+
     fetch(`${LOCAL_API}/ping`, { headers: { 'Bypass-Tunnel-Reminder': 'true' } })
       .then(res => setLocalEngineActive(res.ok))
       .catch(() => setLocalEngineActive(false));
@@ -336,7 +346,7 @@ export default function Home() {
 
       setSaveProgress('saving');
 
-      const response = await fetch(downloadUrl);
+      const response = await fetch(downloadUrl, { headers: { 'Bypass-Tunnel-Reminder': 'true' } });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const safeName = filename.replace(/[<>:"/\\|?*]/g, '_').trim() || 'download';
@@ -467,8 +477,51 @@ export default function Home() {
         const data = await res.json();
 
         if (data.status === 'error') {
-          setError(data.error);
-          setLoading(false);
+          if (FORCE_LOCAL_ENGINE) {
+            try {
+              const cloudRes = await fetch('/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  url: url.trim(),
+                  mode,
+                  videoQuality,
+                  audioFormat,
+                  audioBitrate,
+                  youtubeVideoCodec,
+                }),
+              });
+              const cloudData = await cloudRes.json();
+              if (cloudData.status === 'error') {
+                setError(cloudData.error);
+              } else if (cloudData.status === 'redirect' || cloudData.status === 'tunnel') {
+                setResult(cloudData);
+                addToHistory({
+                  url: url.trim(),
+                  filename: cloudData.filename,
+                  platform: platform?.name || 'Unknown',
+                  mode,
+                });
+                if (dirHandle && cloudData.url && cloudData.filename) {
+                  const saved = await saveToFolder(cloudData.url, cloudData.filename);
+                  if (!saved) triggerDownload(cloudData.url, cloudData.filename);
+                } else {
+                  triggerDownload(cloudData.url, cloudData.filename);
+                }
+              } else if (cloudData.status === 'picker') {
+                setPicker(cloudData);
+              } else {
+                setError({ message: 'Нерозпізнана відповідь від сервера' });
+              }
+            } catch {
+              setError({ message: 'Не вдалося виконати fallback-запит. Перевірте інтернет-з\'єднання.' });
+            } finally {
+              setLoading(false);
+            }
+          } else {
+            setError(data.error);
+            setLoading(false);
+          }
         } else if (data.job_id) {
           // Start polling for progress
           startPolling(data.job_id);
