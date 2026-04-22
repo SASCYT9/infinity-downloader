@@ -180,6 +180,7 @@ const AUDIO_BITRATES = [
 ];
 
 const VIDEO_CODECS = [
+  { value: 'auto', label: 'Авто (максимальна)' },
   { value: 'h264', label: 'H.264 (CapCut)' },
   { value: 'av1', label: 'AV1' },
   { value: 'vp9', label: 'VP9' },
@@ -202,8 +203,8 @@ export default function Home() {
   const [mode, setMode] = useState('auto');
   const [videoQuality, setVideoQuality] = useState('max');
   const [audioFormat, setAudioFormat] = useState('best');
-  const [audioBitrate, setAudioBitrate] = useState('128');
-  const [youtubeVideoCodec, setYoutubeVideoCodec] = useState('h264');
+  const [audioBitrate, setAudioBitrate] = useState('320');
+  const [youtubeVideoCodec, setYoutubeVideoCodec] = useState('auto');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [loading, setLoading] = useState(false);

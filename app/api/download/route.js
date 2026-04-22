@@ -51,7 +51,7 @@ const YOUTUBE_HOST_RE = /(?:^|\.)youtube\.com$|^youtu\.be$|^music\.youtube\.com$
 const QUALITY_OPTIONS = new Set(['max', '2160', '1440', '1080', '720', '480', '360', '240', '144']);
 const AUDIO_FORMATS = new Set(['best', 'mp3', 'ogg', 'wav', 'opus']);
 const AUDIO_BITRATES = new Set(['96', '128', '256', '320']);
-const VIDEO_CODECS = new Set(['h264', 'av1', 'vp9']);
+const VIDEO_CODECS = new Set(['auto', 'h264', 'av1', 'vp9']);
 const DOWNLOAD_MODES = new Set(['auto', 'audio']);
 
 const LOCAL_BACKEND_URL = (process.env.LOCAL_BACKEND_URL || '').trim();
@@ -103,7 +103,7 @@ function normalizeBitrate(value) {
 }
 
 function normalizeCodec(value) {
-  const v = String(value || 'h264').trim().toLowerCase();
+  const v = String(value || 'auto').trim().toLowerCase();
   return VIDEO_CODECS.has(v) ? v : 'h264';
 }
 
@@ -350,8 +350,11 @@ export async function POST(request) {
       audioBitrate,
       filenameStyle: 'pretty',
       downloadMode: mode,
-      youtubeVideoCodec,
     };
+
+    if (youtubeVideoCodec !== 'auto') {
+      cobaltBody.youtubeVideoCodec = youtubeVideoCodec;
+    }
 
     if (mode === 'audio') {
       cobaltBody.downloadMode = 'audio';
