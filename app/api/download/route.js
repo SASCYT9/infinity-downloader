@@ -357,14 +357,15 @@ export async function POST(request) {
       cobaltBody.downloadMode = 'audio';
     }
 
-    // YouTube-specific Cobalt fields per the official API spec — bypass instance restrictions
-    // and prefer higher-quality audio source. localProcessing=preferred lets the instance
-    // hand back direct stream URLs when supported (cheaper for Vercel proxy).
+    // YouTube-specific Cobalt fields per the official API spec — bypass instance
+    // restrictions and prefer higher-quality audio source. We force
+    // localProcessing=disabled so the server always returns a single tunnel URL —
+    // the browser can't merge separate video+audio streams (no ffmpeg-wasm).
     if (isYoutube) {
       cobaltBody.youtubeHLS = true;
       cobaltBody.youtubeBetterAudio = true;
-      cobaltBody.localProcessing = 'preferred';
     }
+    cobaltBody.localProcessing = 'disabled';
 
     let lastError = null;
 
@@ -384,8 +385,11 @@ export async function POST(request) {
             return Response.json(selfResult);
           }
           console.warn('[Self-host] Returned 0-byte tunnel. Falling back.');
-        } else {
-          // redirect, picker, local-processing — return as-is
+        } else if (selfResult.status === 'local-processing') {
+          // Browser can't merge separate streams; fall back to local engine / public instances
+          console.warn('[Self-host] Returned local-processing response, browser cannot merge. Falling back.');
+          lastError = { status: 'error', error: { code: 'error.api.local_processing_unsupported', message: 'Instance returned multi-stream response' } };
+        } else if (selfResult.status === 'redirect' || selfResult.status === 'picker') {
           return Response.json(selfResult);
         }
       }
@@ -453,6 +457,13 @@ export async function POST(request) {
             lastError = { status: 'error', error: { code: 'error.api.corrupted_stream', message: 'Instance produced an empty 0-byte file.' } };
             continue;
           }
+        }
+
+        if (result.status === 'local-processing') {
+          // Browser-side merging not supported. Try next instance.
+          console.warn(`Instance ${instance} returned local-processing response. Skipping.`);
+          lastError = { status: 'error', error: { code: 'error.api.local_processing_unsupported', message: 'Instance returned multi-stream response' } };
+          continue;
         }
 
         // Success — return the result
