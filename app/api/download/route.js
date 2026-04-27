@@ -211,6 +211,39 @@ async function trySelfHostedCobalt(body) {
   }
 }
 
+async function pollLocalDownload(jobId, totalBudgetMs = 40000) {
+  const start = Date.now();
+  const pollInterval = 1500;
+
+  while (Date.now() - start < totalBudgetMs) {
+    await new Promise((r) => setTimeout(r, pollInterval));
+
+    try {
+      const { signal, clear } = makeAbortController(5000);
+      const res = await fetch(`${LOCAL_BACKEND_URL}/api/download/progress/${jobId}`, {
+        headers: localBackendHeaders(),
+        signal,
+      });
+      clear();
+
+      if (!res.ok) continue;
+      const data = await res.json();
+
+      if (data.status === 'completed') {
+        return { status: 'tunnel', url: data.url, filename: data.filename };
+      }
+      if (data.status === 'error') {
+        return { status: 'error', error: { code: 'error.local_backend.download_failed', message: data.error || 'Download failed' } };
+      }
+      // Otherwise still downloading/processing — keep polling
+    } catch {
+      // Network blip — keep polling
+    }
+  }
+
+  return { status: 'error', error: { code: 'error.local_backend.timeout', message: 'Local backend download exceeded budget' } };
+}
+
 async function tryLocalBackend(body) {
   if (!LOCAL_BACKEND_URL || !FORCE_LOCAL_ENGINE) {
     return null;
@@ -224,7 +257,10 @@ async function tryLocalBackend(body) {
   const { signal, clear } = makeAbortController(LOCAL_BACKEND_TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${LOCAL_BACKEND_URL}/api/direct-url`, {
+    // Trigger full-quality download (yt-dlp downloads + merges video+audio
+    // server-side). /api/direct-url can only return single-stream URLs (360p
+    // max for video on YouTube), so we always go through the merge path.
+    const res = await fetch(`${LOCAL_BACKEND_URL}/api/download`, {
       method: 'POST',
       headers: localBackendHeaders(),
       body: JSON.stringify(normalizedBody),
@@ -245,7 +281,18 @@ async function tryLocalBackend(body) {
     }
 
     const data = await res.json();
-    return data;
+    if (data.error) {
+      return { status: 'error', error: { code: 'error.local_backend.start_failed', message: data.error } };
+    }
+    if (!data.job_id) {
+      return { status: 'error', error: { code: 'error.local_backend.invalid_payload', message: 'Missing job_id from local backend' } };
+    }
+
+    // Poll until the download finishes (~40s budget, leaves headroom under
+    // Vercel's 60s maxDuration). The serve URL returned by the local backend
+    // points back to itself via X-Forwarded-Host (i.e. the ngrok hostname),
+    // so the browser can fetch it directly.
+    return await pollLocalDownload(data.job_id);
   } catch (err) {
     if (err.name !== 'AbortError') {
       console.warn('[Primary] Local backend failed:', err.message);
