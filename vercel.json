@@ -1,7 +1,7 @@
 {
   "functions": {
     "app/api/download/route.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     },
     "app/api/telegram/route.js": {
       "maxDuration": 60

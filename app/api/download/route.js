@@ -2,28 +2,11 @@
 // Forwards download requests to working Cobalt instances with local-first fallback
 import { fetchDirectYoutubeUrl } from './ytdlp_fallback';
 
-// Hardcoded fallback instances (sorted by reliability, NO AUTH required)
+// Last-resort hardcoded fallback. cobalt.directory live-discovery is the primary
+// source — this list only kicks in if the directory is unreachable.
+// Imput.net family has the longest uptime; community instances rotate too fast
+// to be worth pinning here.
 const FALLBACK_INSTANCES = [
-  'https://lime.clxxped.lol',
-  'https://cobaltapi.squair.xyz',
-  'https://nuko-c.meowing.de',
-  'https://api.cobalt.liubquanti.click',
-  'https://cobaltapi.kittycat.boo',
-  'https://fox.kittycat.boo',
-  'https://dog.kittycat.boo',
-  'https://melon.clxxped.lol',
-  'https://grapefruit.clxxped.lol',
-  'https://api.dl.woof.monster',
-  'https://api.qwkuns.me',
-  'https://cobaltapi.cjs.nz',
-  'https://subito-c.meowing.de',
-  'https://cobalt.alpha.wolfy.love',
-  'https://api.cobalt.blackcat.sweeux.org',
-  'https://cobalt.omega.wolfy.love',
-];
-
-// Official instances (require JWT — used only as last resort)
-const OFFICIAL_INSTANCES = [
   'https://kityune.imput.net',
   'https://blossom.imput.net',
   'https://nachos.imput.net',
@@ -48,7 +31,7 @@ const CONTENT_LEVEL_ERRORS = [
 ];
 
 const YOUTUBE_HOST_RE = /(?:^|\.)youtube\.com$|^youtu\.be$|^music\.youtube\.com$/i;
-const QUALITY_OPTIONS = new Set(['max', '2160', '1440', '1080', '720', '480', '360', '240', '144']);
+const QUALITY_OPTIONS = new Set(['max', '4320', '2160', '1440', '1080', '720', '480', '360', '240', '144']);
 const AUDIO_FORMATS = new Set(['best', 'mp3', 'ogg', 'wav', 'opus']);
 const AUDIO_BITRATES = new Set(['96', '128', '256', '320']);
 const VIDEO_CODECS = new Set(['auto', 'h264', 'av1', 'vp9']);
@@ -56,11 +39,18 @@ const DOWNLOAD_MODES = new Set(['auto', 'audio']);
 
 const LOCAL_BACKEND_URL = (process.env.LOCAL_BACKEND_URL || '').trim();
 const LOCAL_BACKEND_SECRET = (process.env.LOCAL_BACKEND_SECRET || '').trim();
-const LOCAL_BACKEND_TIMEOUT_MS = parsePositiveInt(process.env.LOCAL_BACKEND_TIMEOUT_MS, 3000);
-const FALLBACK_ONLY_TIMEOUT_MS = parsePositiveInt(process.env.LOCAL_BACKEND_FALLBACK_TIMEOUT_MS, 3000);
+const LOCAL_BACKEND_TIMEOUT_MS = parsePositiveInt(process.env.LOCAL_BACKEND_TIMEOUT_MS, 12000);
+const FALLBACK_ONLY_TIMEOUT_MS = parsePositiveInt(process.env.LOCAL_BACKEND_FALLBACK_TIMEOUT_MS, 8000);
 const FORCE_LOCAL_ENGINE = parseBoolean(
   process.env.FORCE_LOCAL_ENGINE || process.env.USE_LOCAL_ENGINE_FIRST || process.env.NEXT_PUBLIC_USE_LOCAL_ENGINE
 );
+
+// Self-hosted Cobalt with own YouTube cookies (preferred when available).
+const SELF_HOSTED_COBALT = (process.env.COBALT_INSTANCE_URL || '').trim().replace(/\/+$/, '');
+const SELF_HOSTED_COBALT_KEY = (process.env.COBALT_API_KEY || '').trim();
+const SELF_HOSTED_COBALT_TIMEOUT_MS = parsePositiveInt(process.env.COBALT_SELF_HOST_TIMEOUT_MS, 12000);
+const COBALT_INSTANCE_TIMEOUT_MS = parsePositiveInt(process.env.COBALT_INSTANCE_TIMEOUT_MS, 8000);
+const COBALT_MAX_TRIES = parsePositiveInt(process.env.COBALT_MAX_TRIES, 4);
 
 function parseBoolean(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -159,25 +149,18 @@ async function getInstances() {
     const json = await res.json();
     const platformData = json?.data || {};
 
-    // Collect unique instances from ALL platform categories
-    const community = [];
-    const official = [];
+    const discovered = [];
     for (const urls of Object.values(platformData)) {
       if (Array.isArray(urls)) {
         for (const url of urls) {
           const normalized = normalizeInstanceUrl(url);
-          if (!normalized) continue;
-          if (OFFICIAL_INSTANCES.some((off) => normalized.startsWith(off.replace(/\/$/, '')))) {
-            official.push(normalized);
-          } else {
-            community.push(normalized);
-          }
+          if (normalized) discovered.push(normalized);
         }
       }
     }
 
-    if (community.length > 0 || official.length > 0) {
-      return dedupeInstances([...community, ...official, ...FALLBACK_INSTANCES]);
+    if (discovered.length > 0) {
+      return dedupeInstances([...discovered, ...FALLBACK_INSTANCES]);
     }
   } catch {
     // Fall through to hardcoded list
@@ -185,8 +168,8 @@ async function getInstances() {
   return [...FALLBACK_INSTANCES];
 }
 
-async function tryInstance(instanceUrl, body) {
-  const { signal, clear } = makeAbortController(15000);
+async function tryInstance(instanceUrl, body, { extraHeaders = {}, timeoutMs = COBALT_INSTANCE_TIMEOUT_MS } = {}) {
+  const { signal, clear } = makeAbortController(timeoutMs);
 
   try {
     const res = await fetch(instanceUrl, {
@@ -194,6 +177,7 @@ async function tryInstance(instanceUrl, body) {
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
+        ...extraHeaders,
       },
       body: JSON.stringify(body),
       signal,
@@ -210,6 +194,20 @@ async function tryInstance(instanceUrl, body) {
   } catch (err) {
     clear();
     throw err;
+  }
+}
+
+async function trySelfHostedCobalt(body) {
+  if (!SELF_HOSTED_COBALT) return null;
+  const headers = SELF_HOSTED_COBALT_KEY ? { Authorization: `Api-Key ${SELF_HOSTED_COBALT_KEY}` } : {};
+  try {
+    return await tryInstance(SELF_HOSTED_COBALT, body, {
+      extraHeaders: headers,
+      timeoutMs: SELF_HOSTED_COBALT_TIMEOUT_MS,
+    });
+  } catch (err) {
+    console.warn('[Self-host] Cobalt instance failed:', err.message);
+    return { status: 'error', error: { code: 'error.self_host.unreachable', message: err.message } };
   }
 }
 
@@ -359,7 +357,41 @@ export async function POST(request) {
       cobaltBody.downloadMode = 'audio';
     }
 
-    // 1) Local-first: try self-hosted backend (public endpoint + secret) with timeout
+    // YouTube-specific Cobalt fields per the official API spec — bypass instance restrictions
+    // and prefer higher-quality audio source. localProcessing=preferred lets the instance
+    // hand back direct stream URLs when supported (cheaper for Vercel proxy).
+    if (isYoutube) {
+      cobaltBody.youtubeHLS = true;
+      cobaltBody.youtubeBetterAudio = true;
+      cobaltBody.localProcessing = 'preferred';
+    }
+
+    let lastError = null;
+
+    // 1) Self-hosted Cobalt with own cookies — most reliable when configured
+    if (SELF_HOSTED_COBALT) {
+      const selfResult = await trySelfHostedCobalt(cobaltBody);
+      if (selfResult) {
+        const code = selfResult.error?.code || '';
+        if (selfResult.status === 'error') {
+          if (isContentError(code)) {
+            return Response.json(selfResult, { status: 400 });
+          }
+          lastError = selfResult;
+        } else if (selfResult.status === 'tunnel') {
+          const isValid = await verifyTunnel(selfResult.url);
+          if (isValid) {
+            return Response.json(selfResult);
+          }
+          console.warn('[Self-host] Returned 0-byte tunnel. Falling back.');
+        } else {
+          // redirect, picker, local-processing — return as-is
+          return Response.json(selfResult);
+        }
+      }
+    }
+
+    // 2) Local Python/yt-dlp backend (cookies file there too) with timeout
     if (FORCE_LOCAL_ENGINE) {
       const primaryPayload = buildLocalPrimaryPayload(url, mode, videoQuality, audioFormat, audioBitrate, youtubeVideoCodec);
       const localResult = await tryLocalBackend(primaryPayload);
@@ -385,12 +417,10 @@ export async function POST(request) {
       }
     }
 
-    // Get list of working instances
+    // 3) Public Cobalt instances. Bounded retries fit within Vercel maxDuration.
     const instances = await getInstances();
-    let lastError = null;
 
-    // Try up to 10 instances for maximum reliability
-    const maxTries = Math.min(instances.length, 10);
+    const maxTries = Math.min(instances.length, COBALT_MAX_TRIES);
     for (let i = 0; i < maxTries; i++) {
       const instance = instances[i];
       try {

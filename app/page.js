@@ -156,6 +156,7 @@ function formatDuration(seconds) {
 /* ─── Constants ─── */
 const VIDEO_QUALITIES = [
   { value: 'max', label: 'MAX' },
+  { value: '4320', label: '8K' },
   { value: '2160', label: '4K' },
   { value: '1440', label: '1440p' },
   { value: '1080', label: '1080p' },

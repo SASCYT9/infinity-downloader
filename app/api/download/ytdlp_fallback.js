@@ -7,11 +7,11 @@ const YTDLP_LINUX_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/downlo
 const YTDLP_WIN_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
 
 const LOCAL_BACKEND_URL = (process.env.LOCAL_BACKEND_URL || '').trim();
-const LOCAL_BACKEND_TIMEOUT_MS = parsePositiveInt(process.env.LOCAL_BACKEND_TIMEOUT_MS, 3000);
+const LOCAL_BACKEND_TIMEOUT_MS = parsePositiveInt(process.env.LOCAL_BACKEND_TIMEOUT_MS, 12000);
 const LOCAL_BACKEND_SECRET = (process.env.LOCAL_BACKEND_SECRET || '').trim();
 const USE_LOCAL_BACKEND = parseBoolean(process.env.USE_LOCAL_ENGINE_FIRST || process.env.FORCE_LOCAL_ENGINE);
 
-const VIDEO_QUALITY_OPTIONS = new Set(['max', '2160', '1440', '1080', '720', '480', '360', '240', '144']);
+const VIDEO_QUALITY_OPTIONS = new Set(['max', '4320', '2160', '1440', '1080', '720', '480', '360', '240', '144']);
 const FALLBACK_VIDEO_FORMATS = [
   'bestvideo+bestaudio/bestvideo+bestaudio/best',
   'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
@@ -236,7 +236,7 @@ async function fetchViaServerlessYtdlp(url, mode, options = {}) {
             '-j',
             '--no-warnings',
             '--rm-cache-dir',
-            '--extractor-args', 'youtube:player_client=web,ios',
+            '--extractor-args', 'youtube:player_client=tv,mweb',
             '-f', format,
             url,
           ],
