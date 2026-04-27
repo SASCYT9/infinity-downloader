@@ -12,9 +12,11 @@ RUN npm install
 # Copy the rest of the application
 COPY . .
 
-# Pass build args to Next.js build
+# NEXT_PUBLIC_* must be set at build time (Next.js inlines them into the bundle).
 ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_USE_LOCAL_ENGINE=true
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_USE_LOCAL_ENGINE=$NEXT_PUBLIC_USE_LOCAL_ENGINE
 
 # Build the Next.js application
 RUN npm run build
