@@ -398,17 +398,26 @@ export default function Home() {
   // Poll download progress
   function startPolling(jobId) {
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    
+
+    // setInterval with async work can fire again before the previous run resolves.
+    // Once we've seen "completed" or "error" once, ignore subsequent invocations
+    // — otherwise Chrome flags 2+ rapid auto-downloads as suspicious and blocks
+    // the file with "Permission needed".
+    let terminal = false;
+
     pollIntervalRef.current = setInterval(async () => {
+      if (terminal) return;
       try {
         const res = await fetch(`${LOCAL_API}/api/download/progress/${jobId}`, { headers: { 'Bypass-Tunnel-Reminder': 'true' } });
         const data = await res.json();
+        if (terminal) return;
         setDownloadProgress(data);
 
         if (data.status === 'completed') {
+          terminal = true;
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
-          
+
           setResult({
             status: 'tunnel',
             url: data.url,
@@ -434,8 +443,9 @@ export default function Home() {
 
           setLoading(false);
           setTimeout(() => setDownloadProgress(null), 3000);
-          
+
         } else if (data.status === 'error') {
+          terminal = true;
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
           setError(data.error);
@@ -445,7 +455,7 @@ export default function Home() {
       } catch {
         // network blip — keep polling
       }
-    }, 500);
+    }, 1000);
   }
 
   // Handle download
@@ -651,18 +661,23 @@ export default function Home() {
         const data = await res.json();
 
         if (data.job_id) {
-          // Wait for this download to complete
+          // Wait for this download to complete (guarded against double-trigger
+          // race when the interval fires faster than the async progress fetch
+          // resolves — Chrome blocks 2+ rapid auto-downloads).
           await new Promise((resolve) => {
+            let terminal = false;
             const interval = setInterval(async () => {
+              if (terminal) return;
               const progRes = await fetch(`${LOCAL_API}/api/download/progress/${data.job_id}`, { headers: { 'Bypass-Tunnel-Reminder': 'true' } });
               const progData = await progRes.json();
+              if (terminal) return;
 
               if (progData.status === 'completed') {
+                terminal = true;
                 clearInterval(interval);
                 setQueue(prev => prev.map((q, idx) =>
                   idx === i ? { ...q, status: 'completed', filename: progData.filename } : q
                 ));
-                // Auto-download
                 if (dirHandle && progData.url && progData.filename) {
                   await saveToFolder(progData.url, progData.filename);
                 } else {
@@ -670,6 +685,7 @@ export default function Home() {
                 }
                 resolve();
               } else if (progData.status === 'error') {
+                terminal = true;
                 clearInterval(interval);
                 setQueue(prev => prev.map((q, idx) =>
                   idx === i ? { ...q, status: 'error', error: progData.error } : q
