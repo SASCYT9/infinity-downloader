@@ -250,7 +250,6 @@ async function fetchViaServerlessYtdlp(url, mode, options = {}) {
           [
             '-j',
             '--no-warnings',
-            '--no-call-home',
             '--no-check-certificate',
             '--extractor-args', 'youtube:player_client=tv,mweb',
             '-f', format,

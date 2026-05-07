@@ -496,6 +496,7 @@ export async function POST(request) {
     // Filter directory results by "youtube" platform when applicable so we don't
     // burn the retry budget on instances that don't support YouTube at all.
     const instances = await getInstances(isYoutube ? 'youtube' : null);
+    const debugLog = [];
 
     const maxTries = Math.min(instances.length, COBALT_MAX_TRIES);
     for (let i = 0; i < maxTries; i++) {
@@ -505,6 +506,7 @@ export async function POST(request) {
 
         if (result.status === 'error') {
           const code = result.error?.code || '';
+          debugLog.push(`${instance}: error ${code}`);
 
           // Content/URL errors → stop, don't try other instances
           if (isContentError(code)) {
@@ -527,14 +529,17 @@ export async function POST(request) {
           const isValid = await verifyTunnel(result.url);
           if (!isValid) {
             console.warn(`Instance ${instance} returned a corrupted 0-byte tunnel. Skipping.`);
+            debugLog.push(`${instance}: tunnel-but-0-bytes`);
             lastError = { status: 'error', error: { code: 'error.api.corrupted_stream', message: 'Instance produced an empty 0-byte file.' } };
             continue;
           }
+          debugLog.push(`${instance}: tunnel-ok`);
         }
 
         if (result.status === 'local-processing') {
           // Browser-side merging not supported. Try next instance.
           console.warn(`Instance ${instance} returned local-processing response. Skipping.`);
+          debugLog.push(`${instance}: local-processing`);
           lastError = { status: 'error', error: { code: 'error.api.local_processing_unsupported', message: 'Instance returned multi-stream response' } };
           continue;
         }
@@ -542,12 +547,15 @@ export async function POST(request) {
         // Success — return the result
         return Response.json(result);
       } catch (err) {
+        debugLog.push(`${instance}: throw ${err.message}`);
         lastError = {
           status: 'error',
           error: { code: 'error.instance.unavailable', message: `Instance failed: ${err.message}` }
         };
       }
     }
+
+    console.warn('[Cobalt] All instances failed. Trace:', JSON.stringify(debugLog));
 
     // All Cobalt instances failed
     console.log('All Cobalt instances failed. Attempting yt-dlp fallback...');
@@ -562,7 +570,8 @@ export async function POST(request) {
       if (fallbackResult && fallbackResult.status === 'error') {
         const fallbackCode = fallbackResult.error?.code || 'error.fallback';
         const status = isContentError(fallbackCode) ? 400 : 502;
-        return Response.json(fallbackResult, { status });
+        const enriched = { ...fallbackResult, _cobaltTrace: debugLog };
+        return Response.json(enriched, { status });
       }
     }
 
@@ -573,7 +582,8 @@ export async function POST(request) {
         message: 'Усі сервери тимчасово недоступні (включаючи резервний). Спробуйте через хвилину.'
       }
     };
-    return Response.json(normalizeErrorResponse(finalError), { status: 502 });
+    const normalized = normalizeErrorResponse(finalError);
+    return Response.json({ ...normalized, _cobaltTrace: debugLog }, { status: 502 });
 
   } catch (err) {
     return Response.json(
