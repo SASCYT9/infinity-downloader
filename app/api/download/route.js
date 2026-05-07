@@ -511,7 +511,7 @@ export async function POST(request) {
     // client) or null if every instance failed and we should keep trying.
     async function runCobaltLoop(body) {
       const maxTries = Math.min(instances.length, COBALT_MAX_TRIES);
-      let onlyCodecFailures = Boolean(body.youtubeVideoCodec);
+      let sawCodecRejection = false;
       for (let i = 0; i < maxTries; i++) {
         const instance = instances[i];
         try {
@@ -524,8 +524,8 @@ export async function POST(request) {
             if (isContentError(code)) {
               return { response: Response.json(result, { status: 400 }) };
             }
-            if (code !== 'error.api.youtube.no_matching_format') {
-              onlyCodecFailures = false;
+            if (code === 'error.api.youtube.no_matching_format') {
+              sawCodecRejection = true;
             }
             lastError = result;
             continue;
@@ -536,7 +536,6 @@ export async function POST(request) {
             if (!isValid) {
               console.warn(`Instance ${instance} returned a corrupted 0-byte tunnel. Skipping.`);
               debugLog.push(`${instance}: tunnel-but-0-bytes`);
-              onlyCodecFailures = false;
               lastError = { status: 'error', error: { code: 'error.api.corrupted_stream', message: 'Instance produced an empty 0-byte file.' } };
               continue;
             }
@@ -546,7 +545,6 @@ export async function POST(request) {
           if (result.status === 'local-processing') {
             console.warn(`Instance ${instance} returned local-processing response. Skipping.`);
             debugLog.push(`${instance}: local-processing`);
-            onlyCodecFailures = false;
             lastError = { status: 'error', error: { code: 'error.api.local_processing_unsupported', message: 'Instance returned multi-stream response' } };
             continue;
           }
@@ -554,25 +552,24 @@ export async function POST(request) {
           return { response: Response.json(result) };
         } catch (err) {
           debugLog.push(`${instance}: throw ${err.message}`);
-          onlyCodecFailures = false;
           lastError = {
             status: 'error',
             error: { code: 'error.instance.unavailable', message: `Instance failed: ${err.message}` }
           };
         }
       }
-      return { response: null, onlyCodecFailures };
+      return { response: null, sawCodecRejection };
     }
 
     let cobaltOutcome = await runCobaltLoop(cobaltBody);
     if (cobaltOutcome.response) return cobaltOutcome.response;
 
-    // If every error was "no matching format" AND we sent a codec preference,
-    // retry without the codec field so cobalt can pick whatever it has. This
-    // covers the case where the user explicitly chose VP9/AV1 but no instance
-    // has that codec extracted; better to deliver a working H.264 file than
-    // fall through to yt-dlp.
-    if (cobaltOutcome.onlyCodecFailures && cobaltBody.youtubeVideoCodec) {
+    // If at least one instance specifically rejected our codec ("no_matching_format")
+    // AND we sent a codec preference, retry the loop with the codec field
+    // stripped so cobalt picks whatever it has. Auth-required and 0-byte
+    // instances are not codec-related — they would fail with or without it —
+    // and don't disqualify the retry.
+    if (cobaltOutcome.sawCodecRejection && cobaltBody.youtubeVideoCodec) {
       const { youtubeVideoCodec: _drop, ...relaxedBody } = cobaltBody;
       debugLog.push('retry without codec preference');
       cobaltOutcome = await runCobaltLoop(relaxedBody);
