@@ -2,19 +2,19 @@
 // Forwards download requests to working Cobalt instances with local-first fallback
 import { fetchDirectYoutubeUrl } from './ytdlp_fallback';
 
-// Last-resort hardcoded fallback. cobalt.directory live-discovery is the
-// primary source — this list only kicks in if the directory is unreachable.
-// Note: imput.net family (kityune, blossom, nachos, sunny) currently returns
-// Cloudflare challenge pages for datacenter IPs (Vercel/AWS), so they're kept
-// only as last resort. Community instances tend to rotate, so trust the live
-// directory first.
+// Hand-picked instances that have been verified to actually STREAM YouTube
+// bytes (not just respond 200 to a probe). These are tried BEFORE the live
+// directory so the common case is fast. The directory still kicks in via
+// getInstances() so a dying instance can be replaced without redeploy.
+//
+// Notes on what fails for serverless callers right now:
+// - cobaltapi.squair.xyz, dog.kittycat.boo, cobaltapi.kittycat.boo: respond
+//   200 OK to GET but send 0-byte bodies (backend can't fetch YouTube)
+// - imput.net family: returns Cloudflare challenge HTML for AWS/Vercel IPs
+// - Most clxxped/wolfy/mgytr/nuko instances now require Cloudflare Turnstile
+//   JWT auth which we don't implement — they return error.api.auth.jwt.missing
 const FALLBACK_INSTANCES = [
-  'https://cobaltapi.squair.xyz',
-  'https://dog.kittycat.boo',
-  'https://cobaltapi.kittycat.boo',
   'https://api.dl.woof.monster',
-  'https://kityune.imput.net',
-  'https://nachos.imput.net',
 ];
 
 // Errors that mean "this instance can't serve us, try next"
@@ -174,7 +174,9 @@ async function getInstances(platformKey = null) {
     }
 
     if (discovered.length > 0) {
-      return dedupeInstances([...discovered, ...FALLBACK_INSTANCES]);
+      // Trusted (hand-verified) instances go first; the live list comes after
+      // and supplies fresh candidates if the trusted ones go bad.
+      return dedupeInstances([...FALLBACK_INSTANCES, ...discovered]);
     }
   } catch {
     // Fall through to hardcoded list
@@ -329,20 +331,28 @@ function buildLocalPrimaryPayload(url, mode, videoQuality, audioFormat, audioBit
   };
 }
 
-// Cheap liveness check on a returned tunnel URL — HEAD-only so we don't burn
-// seconds buffering the first chunk. Some cobalt tunnels reject HEAD with 405;
-// we treat that as "alive" (the URL exists, the client will retry on read
-// errors). Only an explicit 0-byte content-length or transport failure is
-// treated as dead. Previous implementation read the response body, which on
-// cold YouTube tunnels could spend 1-3s per instance.
-async function verifyTunnel(tunnelUrl, timeoutMs = 3000) {
+// Liveness check on a returned tunnel URL.
+// HEAD is not enough: many broken cobalt instances respond 200 OK to GET but
+// then send a 0-byte body (their backend can't actually fetch from YouTube).
+// We must read the first chunk to be sure the tunnel produces real data.
+// We still cancel the reader immediately to free the connection.
+async function verifyTunnel(tunnelUrl, timeoutMs = 5000) {
   const { signal, clear } = makeAbortController(timeoutMs);
   try {
-    const res = await fetch(tunnelUrl, { method: 'HEAD', signal });
-    if (res.status === 405 || res.status === 501) return true; // HEAD unsupported but tunnel exists
+    const res = await fetch(tunnelUrl, { signal });
     if (!res.ok) return false;
+
     const contentLength = res.headers.get('content-length');
-    return contentLength !== '0';
+    if (contentLength === '0') return false;
+
+    if (res.body) {
+      const reader = res.body.getReader();
+      const first = await reader.read();
+      await reader.cancel();
+      if (first.done && (!first.value || first.value.length === 0)) return false;
+      if (!first.done && (!first.value || first.value.length === 0)) return false;
+    }
+    return true;
   } catch {
     return false;
   } finally {
