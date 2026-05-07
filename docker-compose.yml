@@ -1,0 +1,31 @@
+# Self-hosted Cobalt for local-network use.
+# Listens on :9000. The Next.js API route picks it up via COBALT_INSTANCE_URL
+# in .env.local. Phones / other devices on the same Wi-Fi reach it via the
+# host machine's LAN IP (e.g. http://192.168.50.157:9000), which is what
+# API_URL controls — Cobalt embeds it into the tunnel URLs it returns, so
+# they must be reachable from whichever device is doing the download.
+#
+# Run with:
+#   docker compose up -d
+#
+# Set COBALT_API_URL in your shell/env to your LAN IP before running, or
+# the bundled setup-local.ps1 script does it automatically.
+
+services:
+  cobalt-api:
+    image: ghcr.io/imputnet/cobalt:11
+    init: true
+    read_only: true
+    restart: unless-stopped
+    container_name: cobalt-api
+    ports:
+      - "9000:9000"
+    environment:
+      # Tunnel URLs are built from this. Must be reachable from the device
+      # that will fetch them — i.e. the host LAN IP, not localhost, when you
+      # plan to use the downloader from a phone.
+      API_URL: "${COBALT_API_URL:-http://localhost:9000/}"
+      # Allow long videos. Default is 10800s (3h).
+      DURATION_LIMIT: "10800"
+      # Skip Turnstile / JWT auth — we only expose this on LAN.
+      API_AUTH_REQUIRED: "0"

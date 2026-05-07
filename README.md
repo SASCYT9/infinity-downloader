@@ -43,6 +43,28 @@ npm install
 npm run dev
 ```
 
+## Локальний режим (домашня мережа, без Vercel)
+
+Найнадійніший спосіб качати все, включно з відео, які YouTube блокує для
+датацентрових IP. Cobalt-сервер крутиться у тебе в Docker, Next.js — теж
+локально, телефон/інші пристрої заходять на сайт по LAN-IP твого ПК.
+
+Передумови: встановлений Docker Desktop і Node.js. Запусти один раз:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup-local.ps1
+```
+
+Скрипт сам:
+1. знайде твою Wi-Fi IP-адресу,
+2. запише `.env.local` (для Next.js) і `.env` (для docker compose),
+3. підніме Cobalt у Docker на `:9000`,
+4. запустить Next.js на `0.0.0.0:3000`.
+
+З телефона на тому ж Wi-Fi заходиш на `http://<твоя-LAN-IP>:3000` — у
+кінці виводу скрипт показує точну адресу. Cobalt продовжує крутитись
+після `Ctrl+C` Next.js — зупини його окремо: `docker compose down`.
+
 ## Deploy to Vercel
 
 ```bash
