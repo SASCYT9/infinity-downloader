@@ -2,20 +2,24 @@
 // Forwards download requests to working Cobalt instances with local-first fallback
 import { fetchDirectYoutubeUrl } from './ytdlp_fallback';
 
-// Last-resort hardcoded fallback. cobalt.directory live-discovery is the primary
-// source — this list only kicks in if the directory is unreachable.
-// Imput.net family has the longest uptime; community instances rotate too fast
-// to be worth pinning here.
+// Last-resort hardcoded fallback. cobalt.directory live-discovery is the
+// primary source — this list only kicks in if the directory is unreachable.
+// Note: imput.net family (kityune, blossom, nachos, sunny) currently returns
+// Cloudflare challenge pages for datacenter IPs (Vercel/AWS), so they're kept
+// only as last resort. Community instances tend to rotate, so trust the live
+// directory first.
 const FALLBACK_INSTANCES = [
+  'https://cobaltapi.squair.xyz',
+  'https://dog.kittycat.boo',
+  'https://cobaltapi.kittycat.boo',
+  'https://api.dl.woof.monster',
   'https://kityune.imput.net',
-  'https://blossom.imput.net',
   'https://nachos.imput.net',
-  'https://sunny.imput.net',
 ];
 
 // Errors that mean "this instance can't serve us, try next"
 const INSTANCE_LEVEL_ERRORS = [
-  'error.api.auth',          // JWT/auth required
+  'error.api.auth',          // JWT/auth required (Turnstile, not implemented)
   'error.api.rate_limit',    // rate limited
   'error.api.capacity',      // server overloaded
   'error.api.generic',       // generic server error
@@ -50,7 +54,7 @@ const SELF_HOSTED_COBALT = (process.env.COBALT_INSTANCE_URL || '').trim().replac
 const SELF_HOSTED_COBALT_KEY = (process.env.COBALT_API_KEY || '').trim();
 const SELF_HOSTED_COBALT_TIMEOUT_MS = parsePositiveInt(process.env.COBALT_SELF_HOST_TIMEOUT_MS, 12000);
 const COBALT_INSTANCE_TIMEOUT_MS = parsePositiveInt(process.env.COBALT_INSTANCE_TIMEOUT_MS, 8000);
-const COBALT_MAX_TRIES = parsePositiveInt(process.env.COBALT_MAX_TRIES, 4);
+const COBALT_MAX_TRIES = parsePositiveInt(process.env.COBALT_MAX_TRIES, 8);
 
 function parseBoolean(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -140,8 +144,11 @@ function localBackendHeaders() {
   return headers;
 }
 
-// Try to fetch live instance list from cobalt.directory
-async function getInstances() {
+// Try to fetch live instance list from cobalt.directory.
+// When platformKey is provided (e.g. "youtube"), only return instances that the
+// directory marks as working FOR THAT platform — mixing all platforms wastes
+// the per-instance retry budget on instances that don't support YouTube.
+async function getInstances(platformKey = null) {
   try {
     const { signal, clear } = makeAbortController(4000);
     const res = await fetch('https://cobalt.directory/api/working?type=api', { signal });
@@ -150,11 +157,18 @@ async function getInstances() {
     const platformData = json?.data || {};
 
     const discovered = [];
-    for (const urls of Object.values(platformData)) {
-      if (Array.isArray(urls)) {
-        for (const url of urls) {
-          const normalized = normalizeInstanceUrl(url);
-          if (normalized) discovered.push(normalized);
+    if (platformKey && Array.isArray(platformData[platformKey])) {
+      for (const url of platformData[platformKey]) {
+        const normalized = normalizeInstanceUrl(url);
+        if (normalized) discovered.push(normalized);
+      }
+    } else {
+      for (const urls of Object.values(platformData)) {
+        if (Array.isArray(urls)) {
+          for (const url of urls) {
+            const normalized = normalizeInstanceUrl(url);
+            if (normalized) discovered.push(normalized);
+          }
         }
       }
     }
@@ -315,24 +329,20 @@ function buildLocalPrimaryPayload(url, mode, videoQuality, audioFormat, audioBit
   };
 }
 
-// Helper to ensure the tunnel URL actually provides data and isn't a corrupted 0-byte stream
-async function verifyTunnel(tunnelUrl, timeoutMs = 5000) {
+// Cheap liveness check on a returned tunnel URL — HEAD-only so we don't burn
+// seconds buffering the first chunk. Some cobalt tunnels reject HEAD with 405;
+// we treat that as "alive" (the URL exists, the client will retry on read
+// errors). Only an explicit 0-byte content-length or transport failure is
+// treated as dead. Previous implementation read the response body, which on
+// cold YouTube tunnels could spend 1-3s per instance.
+async function verifyTunnel(tunnelUrl, timeoutMs = 3000) {
   const { signal, clear } = makeAbortController(timeoutMs);
   try {
-    const res = await fetch(tunnelUrl, { signal });
+    const res = await fetch(tunnelUrl, { method: 'HEAD', signal });
+    if (res.status === 405 || res.status === 501) return true; // HEAD unsupported but tunnel exists
     if (!res.ok) return false;
-    
     const contentLength = res.headers.get('content-length');
-    if (contentLength === '0') return false;
-
-    if (res.body) {
-      const reader = res.body.getReader();
-      const first = await reader.read();
-      await reader.cancel(); // Free connection immediately
-
-      if (first.done && (!first.value || first.value.length === 0)) return false;
-    }
-    return true;
+    return contentLength !== '0';
   } catch {
     return false;
   } finally {
@@ -404,21 +414,25 @@ export async function POST(request) {
       cobaltBody.downloadMode = 'audio';
     }
 
-    // YouTube-specific Cobalt fields per the official API spec — bypass instance
-    // restrictions and prefer higher-quality audio source. We force
-    // localProcessing=disabled so the server always returns a single tunnel URL —
-    // the browser can't merge separate video+audio streams (no ffmpeg-wasm).
-    if (isYoutube) {
-      cobaltBody.youtubeHLS = true;
-      cobaltBody.youtubeBetterAudio = true;
-    }
+    // localProcessing=disabled forces the server to merge video+audio into a
+    // single tunnel URL — the browser can't merge separate streams (no
+    // ffmpeg-wasm). Without this we'd get status:"local-processing" responses
+    // we have to reject anyway.
     cobaltBody.localProcessing = 'disabled';
+
+    // Self-hosted Cobalt with cookies can serve HLS reliably; public instances
+    // often respond with multi-stream "local-processing" payloads when HLS is
+    // requested, which we then have to drop. So we only enable HLS for the
+    // self-hosted body below.
+    const selfHostedBody = isYoutube
+      ? { ...cobaltBody, youtubeHLS: true }
+      : cobaltBody;
 
     let lastError = null;
 
     // 1) Self-hosted Cobalt with own cookies — most reliable when configured
     if (SELF_HOSTED_COBALT) {
-      const selfResult = await trySelfHostedCobalt(cobaltBody);
+      const selfResult = await trySelfHostedCobalt(selfHostedBody);
       if (selfResult) {
         const code = selfResult.error?.code || '';
         if (selfResult.status === 'error') {
@@ -469,7 +483,9 @@ export async function POST(request) {
     }
 
     // 3) Public Cobalt instances. Bounded retries fit within Vercel maxDuration.
-    const instances = await getInstances();
+    // Filter directory results by "youtube" platform when applicable so we don't
+    // burn the retry budget on instances that don't support YouTube at all.
+    const instances = await getInstances(isYoutube ? 'youtube' : null);
 
     const maxTries = Math.min(instances.length, COBALT_MAX_TRIES);
     for (let i = 0; i < maxTries; i++) {

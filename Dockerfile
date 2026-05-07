@@ -13,8 +13,12 @@ RUN npm install
 COPY . .
 
 # NEXT_PUBLIC_* must be set at build time (Next.js inlines them into the bundle).
+# NEXT_PUBLIC_USE_LOCAL_ENGINE defaults to "false" so forks don't ping the
+# repo author's loca.lt tunnel when no local backend is configured. Set to
+# "true" in your build args only if you're running the matching local backend
+# and pointing NEXT_PUBLIC_API_URL at it.
 ARG NEXT_PUBLIC_API_URL
-ARG NEXT_PUBLIC_USE_LOCAL_ENGINE=true
+ARG NEXT_PUBLIC_USE_LOCAL_ENGINE=false
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_USE_LOCAL_ENGINE=$NEXT_PUBLIC_USE_LOCAL_ENGINE
 

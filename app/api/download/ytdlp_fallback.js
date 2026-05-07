@@ -1,7 +1,10 @@
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 const YTDLP_LINUX_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux';
 const YTDLP_WIN_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
@@ -12,17 +15,21 @@ const LOCAL_BACKEND_SECRET = (process.env.LOCAL_BACKEND_SECRET || '').trim();
 const USE_LOCAL_BACKEND = parseBoolean(process.env.USE_LOCAL_ENGINE_FIRST || process.env.FORCE_LOCAL_ENGINE);
 
 const VIDEO_QUALITY_OPTIONS = new Set(['max', '4320', '2160', '1440', '1080', '720', '480', '360', '240', '144']);
+// Vercel serverless has no ffmpeg, so we can't merge separate video+audio
+// streams. We must request formats that come as a SINGLE file. On YouTube the
+// last format guaranteed to exist as a combined progressive stream is 18
+// (360p mp4). Format selectors with "+" produce multi-stream output and yt-dlp
+// returns no top-level `info.url` for those, so we drop them.
 const FALLBACK_VIDEO_FORMATS = [
-  'bestvideo+bestaudio/bestvideo+bestaudio/best',
-  'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-  'best[ext=mp4]/best',
+  'best[ext=mp4][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]/best',
+  '18/best[ext=mp4]/best',
   'best',
 ];
 const FALLBACK_AUDIO_FORMATS = [
-  'bestaudio',
-  'bestaudio/best',
   'bestaudio[ext=m4a]/bestaudio/best',
   'bestaudio[ext=webm]/bestaudio/best',
+  'bestaudio/best',
+  '140/bestaudio',
 ];
 
 function parseBoolean(value) {
@@ -49,11 +56,14 @@ function normalizeYouTubeQuality(value) {
 }
 
 function buildYtdlpVideoFormat(quality) {
+  // Single-stream only — see note on FALLBACK_VIDEO_FORMATS above. We can't
+  // merge in serverless. Combined-stream selectors are tried first; if YouTube
+  // refuses to serve a combined stream at the requested height we fall back
+  // to lower qualities through the FALLBACK list.
   if (quality === 'max') {
-    return 'bestvideo+bestaudio/bestvideo+bestaudio/best';
+    return 'best[ext=mp4][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]/best';
   }
-
-  return `bestvideo[height<=${quality}]+bestaudio[ext=m4a]/best[height<=${quality}]/best`;
+  return `best[height<=${quality}][ext=mp4][vcodec!=none][acodec!=none]/best[height<=${quality}][vcodec!=none][acodec!=none]/best`;
 }
 
 function buildFormatCandidates(mode, options = {}) {
@@ -74,6 +84,8 @@ function isRetryableErrorMessage(message) {
     'requested format is not available',
     'requested format not available',
     'no video formats found',
+    'no such format',
+    'unable to extract',
     'this video is no longer available',
     'video unavailable',
     'private video',
@@ -223,19 +235,23 @@ async function fetchViaServerlessYtdlp(url, mode, options = {}) {
     }
 
     const formats = buildFormatCandidates(mode, options);
-    const timeout = parseYtdlpTimeout(process.env.YTDLP_TIMEOUT_MS, 18000);
+    // Default 12s per attempt — Vercel maxDuration is 60s and we still need
+    // headroom for the response trip. --rm-cache-dir was removed because it
+    // forces yt-dlp to rebuild extractor caches every cold start.
+    const timeout = parseYtdlpTimeout(process.env.YTDLP_TIMEOUT_MS, 12000);
     let lastError = null;
     let info = null;
 
     for (const format of formats) {
       try {
         console.log(`Executing yt-dlp for ${url} with format ${format}`);
-        const outputBuffer = execFileSync(
+        const { stdout } = await execFileAsync(
           binPath,
           [
             '-j',
             '--no-warnings',
-            '--rm-cache-dir',
+            '--no-call-home',
+            '--no-check-certificate',
             '--extractor-args', 'youtube:player_client=tv,mweb',
             '-f', format,
             url,
@@ -246,7 +262,7 @@ async function fetchViaServerlessYtdlp(url, mode, options = {}) {
           }
         );
 
-        const outStr = outputBuffer.toString('utf-8').trim();
+        const outStr = String(stdout || '').trim();
         if (!outStr) {
           throw new Error('yt-dlp returned empty output');
         }

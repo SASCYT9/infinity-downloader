@@ -193,8 +193,10 @@ const PLATFORMS = [
   'Pinterest', 'Facebook', 'Dailymotion', '1000+',
 ];
 
-const LOCAL_API = process.env.NEXT_PUBLIC_API_URL || 'https://infinity-dl.loca.lt';
-const FORCE_LOCAL_ENGINE = isTruthyFlag(process.env.NEXT_PUBLIC_USE_LOCAL_ENGINE);
+// LOCAL_API must be supplied via NEXT_PUBLIC_API_URL at build time. When
+// empty, the local-engine path is disabled entirely — see effect below.
+const LOCAL_API = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
+const FORCE_LOCAL_ENGINE = isTruthyFlag(process.env.NEXT_PUBLIC_USE_LOCAL_ENGINE) && Boolean(LOCAL_API);
 
 /* ═══════════════════════════════════
    MAIN PAGE COMPONENT
