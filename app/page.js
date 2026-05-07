@@ -49,13 +49,20 @@ const ERROR_MESSAGES = {
   'error.api.youtube.decipher': 'Не вдалося розшифрувати відео. Спробуйте через хвилину.',
   'error.api.link.unsupported': 'Цей сайт або формат посилання не підтримується.',
   'error.api.fetch.empty': 'Не вдалося знайти контент за цим посиланням.',
+  'error.youtube.bot_block': 'YouTube заблокував завантаження цього відео з нашого сервера 🤖\nЦе тимчасово і стосується конкретно цього відео. Спробуйте інше відео або зачекайте 5–10 хвилин.',
+  'error.youtube.private': 'Це приватне відео або лише для учасників каналу.',
+  'error.ytdlp.timeout': 'Завантаження зайняло занадто довго. Спробуйте ще раз або інше відео.',
+  'error.ytdlp': 'Не вдалося завантажити це відео. Спробуйте інше або зачекайте кілька хвилин.',
 };
 
 function getErrorText(error) {
   if (!error) return 'Невідома помилка';
   if (typeof error === 'string') return error;
-  if (error.message) return error.message;
+  // Prefer the friendly mapping by code over a raw upstream message — many
+  // upstreams (yt-dlp especially) include long English error blobs with wiki
+  // links that we don't want to dump to the user.
   if (error.code && ERROR_MESSAGES[error.code]) return ERROR_MESSAGES[error.code];
+  if (error.message) return error.message;
   if (error.code) return `Помилка: ${error.code}`;
   return 'Щось пішло не так. Спробуйте інше посилання.';
 }

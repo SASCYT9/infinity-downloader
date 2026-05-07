@@ -251,7 +251,11 @@ async function fetchViaServerlessYtdlp(url, mode, options = {}) {
             '-j',
             '--no-warnings',
             '--no-check-certificate',
-            '--extractor-args', 'youtube:player_client=tv,mweb',
+            // Multiple clients ranked by bot-check leniency. tv_embedded is
+            // often the most permissive on protected videos; ios sometimes
+            // works when web is blocked. yt-dlp tries them in order and
+            // returns the first that yields a usable manifest.
+            '--extractor-args', 'youtube:player_client=tv_embedded,ios,tv,mweb,web_safari',
             '-f', format,
             url,
           ],
@@ -297,10 +301,50 @@ async function fetchViaServerlessYtdlp(url, mode, options = {}) {
   } catch (error) {
     console.error('yt-dlp serverless fallback failed:', error.message);
     const message = error.message || 'yt-dlp serverless fallback failed';
+    const lower = message.toLowerCase();
+
+    // YouTube anti-bot wall: the datacenter IP got flagged. Surface a clean,
+    // actionable message instead of the raw yt-dlp stderr blob (which dumps
+    // wiki links and cookie-export instructions at the user).
+    if (
+      lower.includes("sign in to confirm you're not a bot") ||
+      lower.includes('sign in to confirm you’re not a bot') ||
+      lower.includes('confirm you are not a bot') ||
+      (lower.includes('cookies') && lower.includes('authentication'))
+    ) {
+      return {
+        status: 'error',
+        error: {
+          code: 'error.youtube.bot_block',
+          message: 'YouTube заблокував завантаження цього відео з нашого сервера 🤖\nЦе тимчасово і стосується конкретно цього відео. Спробуйте інше відео або зачекайте 5–10 хвилин.',
+        },
+      };
+    }
+
+    if (lower.includes('age') && lower.includes('restrict')) {
+      return {
+        status: 'error',
+        error: {
+          code: 'error.youtube.age',
+          message: 'Це відео має вікові обмеження YouTube — без авторизації завантажити неможливо.',
+        },
+      };
+    }
+
+    if (lower.includes('private video') || lower.includes('members-only')) {
+      return {
+        status: 'error',
+        error: {
+          code: 'error.youtube.private',
+          message: 'Це приватне відео або лише для учасників каналу.',
+        },
+      };
+    }
+
     return {
       status: 'error',
       error: {
-        code: message.includes('timed out') ? 'error.ytdlp.timeout' : 'error.ytdlp',
+        code: lower.includes('timed out') ? 'error.ytdlp.timeout' : 'error.ytdlp',
         message,
       },
     };
