@@ -26,6 +26,7 @@ const INSTANCE_LEVEL_ERRORS = [
   'error.api.youtube.login', // needs cookies (some instances have them)
   'error.api.youtube.age',   // age restricted (some instances bypass)
   'error.api.youtube.decipher', // decipher error (instance-specific)
+  'error.api.youtube.no_matching_format', // codec/quality combo not extracted on this instance
 ];
 
 // Errors that mean "the URL/content is the problem, don't retry"
@@ -417,8 +418,16 @@ export async function POST(request) {
       downloadMode: mode,
     };
 
-    // Keep H.264 as explicit opt-in. For default/auto mode prefer VP9 to unlock 4K webm when available.
-    cobaltBody.youtubeVideoCodec = youtubeVideoCodec === 'auto' ? 'vp9' : youtubeVideoCodec;
+    // Codec selection. The previous default forced VP9 to unlock 4K webm, but
+    // many community instances simply don't have VP9 streams extracted at
+    // common qualities (e.g. woof.monster returns error.api.youtube.no_matching_format
+    // for 720p VP9). When the user chose "auto", omit the codec field
+    // entirely so cobalt picks the most compatible stream available — that's
+    // H.264 below 1080p and falls back gracefully. Only forward an explicit
+    // user choice (h264 / vp9 / av1).
+    if (youtubeVideoCodec && youtubeVideoCodec !== 'auto') {
+      cobaltBody.youtubeVideoCodec = youtubeVideoCodec;
+    }
 
     if (mode === 'audio') {
       cobaltBody.downloadMode = 'audio';
